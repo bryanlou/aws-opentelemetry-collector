@@ -10,8 +10,7 @@ Convert OpenTelemetry ```Int64DataPoints```, ```DoubleDataPoints```, ```SummaryD
 
 ## Exporter Configuration
 
-The following exporter configuration parameters are supported. They mirror and have the same affect as the
-comparable AWS X-Ray Daemon configuration values.
+The following exporter configuration parameters are supported.
 
 | Name              | Description                                                            | Default |
 | :---------------- | :--------------------------------------------------------------------- | ------- |

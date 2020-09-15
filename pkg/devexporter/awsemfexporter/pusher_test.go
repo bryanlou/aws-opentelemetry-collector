@@ -1,13 +1,25 @@
+// Copyright 2020, OpenTelemetry Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package awsemfexporter
 
 import (
 	"fmt"
-	"github.com/open-telemetry/opentelemetry-collector-contrib/exporter/awsemfexporter/publisher"
 	"io/ioutil"
 	"math/rand"
 	"os"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -21,7 +33,7 @@ import (
 //
 func TestLogEvent_eventPayloadBytes(t *testing.T) {
 	testMessage := "test message"
-	logEvent := NewLogEvent(0, testMessage, "", 0, "")
+	logEvent := NewLogEvent(0, testMessage, "", 0)
 	assert.Equal(t, len(testMessage)+PerEventHeaderBytes, logEvent.eventPayloadBytes())
 }
 
@@ -67,8 +79,7 @@ func TestLogEventBatch_sortLogEvents(t *testing.T) {
 			int64(timestamp),
 			fmt.Sprintf("message%v", timestamp),
 			"FileName",
-			int64(timestamp),
-			"")
+			int64(timestamp))
 		fmt.Printf("logEvents[%d].Timetsmap=%d.\n", i, timestamp)
 		logEventBatch.PutLogEventsInput.LogEvents = append(logEventBatch.PutLogEventsInput.LogEvents, logEvent.InputLogEvent)
 	}
@@ -87,15 +98,11 @@ func TestLogEventBatch_sortLogEvents(t *testing.T) {
 //
 
 // Need to remove the tmp state folder after testing.
-func NewMockPusher() (*pusher, string, chan<- bool) {
+func newMockPusher() (*pusher, string) {
 	tmpfolder, _ := ioutil.TempDir("", "")
-	shutdownChan := make(chan bool)
 	svc := NewAlwaysPassMockLogClient()
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	p := newPusher(&logGroup, &logStreamName, &tmpfolder, time.Second, svc, shutdownChan, &wg)
-	p.publisher, _ = publisher.NewPublisher(publisher.NewNonBlockingFifoQueue(1), 1, 2*time.Second, p.pushLogEventBatch)
-	return p, tmpfolder, shutdownChan
+	p := newPusher(&logGroup, &logStreamName, svc)
+	return p, tmpfolder
 }
 
 //
@@ -107,86 +114,8 @@ var msg = "test log message"
 var fileName = "/tmp/logfile.log"
 var fileOffset = int64(123)
 
-func TestPusher_processLogEntry(t *testing.T) {
-	p, tmpFolder, shutdownChan := NewMockPusher()
-	defer os.RemoveAll(tmpFolder)
-
-	logEvent := NewLogEvent(timestampInMillis, msg, fileName, fileOffset, "")
-	//fake the log event batch is almost full
-	p.logEventBatch.byteTotal = MaxRequestPayloadBytes - 2*logEvent.eventPayloadBytes() + 1
-	go p.processLogEntry()
-
-	p.logEventChan <- logEvent
-	logEvent = NewLogEvent(timestampInMillis, msg, fileName, fileOffset, "")
-	p.logEventChan <- logEvent
-
-	time.Sleep(time.Millisecond * 100)
-	close(shutdownChan)
-
-	select {
-	case <-p.logEventChan:
-		assert.Fail(t, "The log event should be already consumed.")
-	default:
-	}
-
-	select {
-	case <-p.pushChan:
-	default:
-		assert.Fail(t, "The log event batch chan (push chan) should have entry.")
-	}
-
-}
-
-func TestPusher_processLogEntryforZeroTimestamp(t *testing.T) {
-	p, tmpFolder, shutdownChan := NewMockPusher()
-	defer os.RemoveAll(tmpFolder)
-
-	logEvent := NewLogEvent(0, msg, fileName, fileOffset, "")
-	//fake the log event batch is almost full
-	logEvent.LogGeneratedTime = time.Unix(int64(timestampInMillis/1e3), 0)
-	p.logEventBatch.byteTotal = MaxRequestPayloadBytes - 2*logEvent.eventPayloadBytes() + 1
-	go p.processLogEntry()
-
-	p.logEventChan <- logEvent
-	logEvent = NewLogEvent(0, msg, fileName, fileOffset, "")
-	logEvent.LogGeneratedTime = time.Unix(int64(timestampInMillis/1e3), 0)
-	p.logEventChan <- logEvent
-
-	time.Sleep(time.Millisecond * 100)
-	close(shutdownChan)
-	assert.Equal(t, int64(timestampInMillis/1e3)*1e3, *logEvent.InputLogEvent.Timestamp)
-	select {
-	case <-p.logEventChan:
-		assert.Fail(t, "The log event should be already consumed.")
-	default:
-	}
-
-	select {
-	case <-p.pushChan:
-	default:
-		assert.Fail(t, "The log event batch chan (push chan) should have entry.")
-	}
-}
-
-func TestPusher_push(t *testing.T) {
-	p, tmpFolder, shutdownChan := NewMockPusher()
-	defer os.RemoveAll(tmpFolder)
-
-	go p.push()
-
-	p.pushChan <- p.newLogEventBatch()
-	time.Sleep(time.Millisecond * 100)
-	close(shutdownChan)
-
-	select {
-	case <-p.pushChan:
-		assert.Fail(t, "The log event batch in the push chan should be already consumed by push() func.")
-	default:
-	}
-}
-
 func TestPusher_newLogEventBatch(t *testing.T) {
-	p, tmpFolder, _ := NewMockPusher()
+	p, tmpFolder := newMockPusher()
 	defer os.RemoveAll(tmpFolder)
 
 	logEventBatch := p.newLogEventBatch()
@@ -202,11 +131,11 @@ func TestPusher_newLogEventBatch(t *testing.T) {
 }
 
 func TestPusher_newLogEventBatchIfNeeded(t *testing.T) {
-	p, tmpFolder, _ := NewMockPusher()
+	p, tmpFolder := newMockPusher()
 	defer os.RemoveAll(tmpFolder)
 
 	cap := cap(p.logEventBatch.PutLogEventsInput.LogEvents)
-	logEvent := NewLogEvent(timestampInMillis, msg, fileName, fileOffset, "")
+	logEvent := NewLogEvent(timestampInMillis, msg, fileName, fileOffset)
 
 	for i := 0; i < cap; i++ {
 		p.logEventBatch.PutLogEventsInput.LogEvents = append(p.logEventBatch.PutLogEventsInput.LogEvents, logEvent.InputLogEvent)
@@ -217,66 +146,35 @@ func TestPusher_newLogEventBatchIfNeeded(t *testing.T) {
 	p.newLogEventBatchIfNeeded(logEvent)
 	//the actual log event add operation happens after the func newLogEventBatchIfNeeded
 	assert.Equal(t, 0, len(p.logEventBatch.PutLogEventsInput.LogEvents))
-	select {
-	case <-p.pushChan:
-	default:
-		assert.Fail(t, "A log event batch should be retrieved.")
-	}
 
 	p.logEventBatch.byteTotal = MaxRequestPayloadBytes - logEvent.eventPayloadBytes() + 1
 	p.newLogEventBatchIfNeeded(logEvent)
 	assert.Equal(t, 0, len(p.logEventBatch.PutLogEventsInput.LogEvents))
-	select {
-	case <-p.pushChan:
-	default:
-		assert.Fail(t, "A log event batch should be retrieved.")
-	}
 
 	p.logEventBatch.minTimestampInMillis, p.logEventBatch.maxTimestampInMillis = timestampInMillis, timestampInMillis
-	p.newLogEventBatchIfNeeded(NewLogEvent(timestampInMillis+(time.Hour*24+time.Millisecond*1).Nanoseconds()/1e6, msg, fileName, fileOffset, ""))
+	p.newLogEventBatchIfNeeded(NewLogEvent(timestampInMillis+(time.Hour*24+time.Millisecond*1).Nanoseconds()/1e6, msg, fileName, fileOffset))
 	assert.Equal(t, 0, len(p.logEventBatch.PutLogEventsInput.LogEvents))
-	select {
-	case <-p.pushChan:
-	default:
-		assert.Fail(t, "A log event batch should be retrieved.")
-	}
 
-	time.Sleep(p.forceFlushInterval + time.Second)
 	//even the event batch is expired, the total byte is sitll 0 at this time.
 	p.newLogEventBatchIfNeeded(nil)
 	assert.Equal(t, 0, len(p.logEventBatch.PutLogEventsInput.LogEvents))
-	select {
-	case <-p.pushChan:
-		assert.Fail(t, "A log event batch should not be retrieved.")
-	default:
-	}
 
 	//even the event batch is expired, the total byte is sitll 0 at this time.
 	p.newLogEventBatchIfNeeded(logEvent)
 	assert.Equal(t, 0, len(p.logEventBatch.PutLogEventsInput.LogEvents))
-	select {
-	case <-p.pushChan:
-		assert.Fail(t, "A log event batch should not be retrieved.")
-	default:
-	}
 
 	//the previous sleep is still in effect at this step.
 	p.logEventBatch.byteTotal = 1
 	p.newLogEventBatchIfNeeded(nil)
 	assert.Equal(t, 0, len(p.logEventBatch.PutLogEventsInput.LogEvents))
-	select {
-	case <-p.pushChan:
-	default:
-		assert.Fail(t, "A log event batch should be retrieved.")
-	}
 
 }
 
 func TestPusher_addLogEvent(t *testing.T) {
-	p, tmpFolder, _ := NewMockPusher()
+	p, tmpFolder := newMockPusher()
 	defer os.RemoveAll(tmpFolder)
 
-	p.addLogEvent(NewLogEvent(time.Now().Add(-(14*24+1)*time.Hour).UnixNano()/1e6, msg, fileName, fileOffset, ""))
+	p.addLogEvent(NewLogEvent(time.Now().Add(-(14*24+1)*time.Hour).UnixNano()/1e6, msg, fileName, fileOffset))
 	assert.Equal(t, 0, len(p.logEventBatch.PutLogEventsInput.LogEvents))
 	assert.Equal(t, int64(0), p.logEventBatch.minTimestampInMillis)
 	assert.Equal(t, int64(0), p.logEventBatch.maxTimestampInMillis)
@@ -284,7 +182,7 @@ func TestPusher_addLogEvent(t *testing.T) {
 	assert.Equal(t, int64(0), p.logEventBatch.FilePosition)
 	assert.Equal(t, 0, p.logEventBatch.byteTotal)
 
-	p.addLogEvent(NewLogEvent(time.Now().Add((2+1)*time.Hour).UnixNano()/1e6, msg, fileName, fileOffset, ""))
+	p.addLogEvent(NewLogEvent(time.Now().Add((2+1)*time.Hour).UnixNano()/1e6, msg, fileName, fileOffset))
 	assert.Equal(t, 0, len(p.logEventBatch.PutLogEventsInput.LogEvents))
 	assert.Equal(t, int64(0), p.logEventBatch.minTimestampInMillis)
 	assert.Equal(t, int64(0), p.logEventBatch.maxTimestampInMillis)
@@ -292,7 +190,7 @@ func TestPusher_addLogEvent(t *testing.T) {
 	assert.Equal(t, int64(0), p.logEventBatch.FilePosition)
 	assert.Equal(t, 0, p.logEventBatch.byteTotal)
 
-	p.addLogEvent(NewLogEvent(timestampInMillis, "", fileName, fileOffset, ""))
+	p.addLogEvent(NewLogEvent(timestampInMillis, "", fileName, fileOffset))
 	assert.Equal(t, 0, len(p.logEventBatch.PutLogEventsInput.LogEvents))
 	assert.Equal(t, int64(0), p.logEventBatch.minTimestampInMillis)
 	assert.Equal(t, int64(0), p.logEventBatch.maxTimestampInMillis)
@@ -300,7 +198,7 @@ func TestPusher_addLogEvent(t *testing.T) {
 	assert.Equal(t, int64(0), p.logEventBatch.FilePosition)
 	assert.Equal(t, 0, p.logEventBatch.byteTotal)
 
-	p.addLogEvent(NewLogEvent(timestampInMillis, msg, fileName, fileOffset, ""))
+	p.addLogEvent(NewLogEvent(timestampInMillis, msg, fileName, fileOffset))
 	assert.Equal(t, 1, len(p.logEventBatch.PutLogEventsInput.LogEvents))
 	assert.Equal(t, timestampInMillis, p.logEventBatch.minTimestampInMillis)
 	assert.Equal(t, timestampInMillis, p.logEventBatch.maxTimestampInMillis)
@@ -308,7 +206,7 @@ func TestPusher_addLogEvent(t *testing.T) {
 	assert.Equal(t, fileOffset, p.logEventBatch.FilePosition)
 	assert.Equal(t, len(msg)+PerEventHeaderBytes, p.logEventBatch.byteTotal)
 
-	p.addLogEvent(NewLogEvent(timestampInMillis+1, msg+"1", fileName+"1", fileOffset+1, ""))
+	p.addLogEvent(NewLogEvent(timestampInMillis+1, msg+"1", fileName+"1", fileOffset+1))
 	assert.Equal(t, 2, len(p.logEventBatch.PutLogEventsInput.LogEvents))
 	assert.Equal(t, timestampInMillis, p.logEventBatch.minTimestampInMillis)
 	assert.Equal(t, timestampInMillis+1, p.logEventBatch.maxTimestampInMillis)
@@ -318,24 +216,14 @@ func TestPusher_addLogEvent(t *testing.T) {
 }
 
 func TestPusher_truncateLogEvent(t *testing.T) {
-	p, tmpFolder, shutdownChan := NewMockPusher()
+	p, tmpFolder := newMockPusher()
 	defer os.RemoveAll(tmpFolder)
 	largeEventContent := strings.Repeat("a", MaxEventPayloadBytes)
 
-	logEvent := NewLogEvent(timestampInMillis, largeEventContent, fileName, MaxEventPayloadBytes, "")
-	logEvent.multiLineStart = true
+	logEvent := NewLogEvent(timestampInMillis, largeEventContent, fileName, MaxEventPayloadBytes)
 	expectedTruncatedContent := (*logEvent.InputLogEvent.Message)[0:(MaxEventPayloadBytes-PerEventHeaderBytes-len(TruncatedSuffix))] + TruncatedSuffix
 
-	go p.processLogEntry()
+	p.AddLogEntry(logEvent)
 
-	p.logEventChan <- logEvent
-
-	time.Sleep(time.Millisecond * 100)
-	close(shutdownChan)
 	assert.Equal(t, expectedTruncatedContent, *logEvent.InputLogEvent.Message)
-	select {
-	case <-p.logEventChan:
-		assert.Fail(t, "The log event should be already consumed.")
-	default:
-	}
 }

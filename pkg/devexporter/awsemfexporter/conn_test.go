@@ -1,4 +1,4 @@
-// Copyright 2019, OpenTelemetry Authors
+// Copyright 2020, OpenTelemetry Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -24,7 +24,8 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	"go.opentelemetry.io/collector/config"
+	"go.opentelemetry.io/collector/component/componenttest"
+	"go.opentelemetry.io/collector/config/configtest"
 	"go.uber.org/zap"
 )
 
@@ -85,11 +86,11 @@ func TestRegionEnv(t *testing.T) {
 }
 
 func loadExporterConfig(t *testing.T) *Config {
-	factories, err := config.ExampleComponents()
+	factories, err := componenttest.ExampleComponents()
 	assert.Nil(t, err)
-	factory := &Factory{}
+	factory := NewFactory()
 	factories.Exporters[factory.Type()] = factory
-	otelcfg, _ := config.LoadConfigFile(
+	otelcfg, _ := configtest.LoadConfigFile(
 		t, path.Join(".", "testdata", "config.yaml"), factories,
 	)
 	emfExporterCfg := otelcfg.Exporters["awsemf"].(*Config)

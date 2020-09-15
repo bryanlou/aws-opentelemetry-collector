@@ -21,6 +21,7 @@ import (
 	"aws-observability.io/collector/pkg/logger"
 	"aws-observability.io/collector/tools/version"
 	"github.com/pkg/errors"
+	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/service"
 	"go.uber.org/zap/zapcore"
 	"log"
@@ -44,7 +45,7 @@ func main() {
 	// init lumberFunc for zap logger
 	lumberHook := logger.GetLumberHook()
 
-	info := service.ApplicationStartInfo{
+	info := component.ApplicationStartInfo{
 		ExeName:  "aws-observability-collector",
 		LongName: "AWS Observability Collector",
 		Version:  version.Version,
