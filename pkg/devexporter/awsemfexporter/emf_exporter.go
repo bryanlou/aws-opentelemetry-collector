@@ -187,6 +187,13 @@ func generateLogEventFromMetric(metric pdata.Metrics) ([]*LogEvent, string) {
 		)
 		logEvent.multiLineStart = true
 		logEvent.LogGeneratedTime = time.Unix(0, metricCreationTime*int64(time.Millisecond))
+		
+		if ples.MetricDeclarationsDedup {
+			svcStructuredLog.AttachMetricRuleWithDedup(met,rules)
+		} else {
+			svcStructuredLog.AttachMetricRuleWith(met,rules)
+		}
+
 		ples = append(ples, logEvent)
 	}
 	return ples, namespace
